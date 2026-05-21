@@ -1,0 +1,6 @@
+{
+  "name": "ESP32-C6 ZBOSS adapter for ZHA",
+  "render_readme": true,
+  "homeassistant": "2025.1.0",
+  "iot_class": "Local Polling"
+}

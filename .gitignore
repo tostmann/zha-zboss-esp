@@ -1,0 +1,30 @@
+# NIEMALS in Git (projekt-übergreifende Regel):
+CLAUDE.md
+MEMORY.md
+GEMINI.md
+FACTS.md
+HARDWARE_STATUS.md
+.env
+.env.*
+*.key
+*.pem
+*.log
+schematics/
+datasheets/
+datasheet/
+__pycache__/
+.claude/
+.gemini/
+
+# Python build/dev artefacts
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
