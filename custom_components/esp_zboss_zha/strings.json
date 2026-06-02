@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ESP32-C6 ZBOSS adapter for ZHA",
+        "description": "This adds ZBOSS as a radio type to Home Assistant's ZHA integration. There is nothing to configure — select Submit to activate the compatibility patches. Afterwards, add (or re-open) the Zigbee Home Automation integration and pick ZBOSS as the radio type."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Already set up. Only a single instance is needed — the patches are applied process-wide."
+    }
+  }
+}

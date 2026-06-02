@@ -35,6 +35,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # imports only needed for type hints
+    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.typing import ConfigType
 
@@ -44,13 +45,49 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Apply runtime patches; nothing else to set up.
+    """YAML path — legacy / optional.
+
+    Kept for back-compat with anyone who added `esp_zboss_zha:` to
+    `configuration.yaml` under v0.1.x. As of v0.2.0 the supported way to load
+    this integration is the config entry (`async_setup_entry`), created via
+    **Settings → Devices & Services → Add Integration**. Both paths call the
+    same idempotent patch routine, so having both active is harmless.
+    """
+    await _async_apply(hass)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Config-entry path — the supported one as of v0.2.0.
+
+    Runs on every Home Assistant start, early enough that the `RadioType`
+    extension is in place before ZHA's add-integration flow reads it. This is
+    what fixes issue #1: with no config entry (and no `configuration.yaml`
+    key) Home Assistant never called `async_setup`, so the patches never ran
+    and ZBOSS never showed up in ZHA's radio picker.
+    """
+    await _async_apply(hass)
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Allow removing the entry.
+
+    The patches are process-global enum/attribute mutations that can't be
+    cleanly reverted at runtime, so unload is a no-op that simply succeeds; a
+    Home Assistant restart fully clears them.
+    """
+    return True
+
+
+async def _async_apply(hass: HomeAssistant) -> None:
+    """Apply the compat patches and log the resulting RadioType members.
 
     The patch functions do synchronous file I/O when first importing
     `zigpy_zboss`, `zigpy`, `zha` (module load, schema scan, voluptuous
     compilation, etc.). HA's loop watchdog warns about blocking-on-event-loop
-    if we do that from `async_setup` directly. Run the work in an executor
-    thread so the event loop stays unblocked.
+    if we do that on the event loop directly, so run the work in an executor
+    thread.
     """
     applied = await hass.async_add_executor_job(_apply_all_patches)
 
@@ -71,8 +108,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             "[%s] post-patch RadioType members: %s (zboss present: %s)",
             DOMAIN, members, "zboss" in members,
         )
-
-    return True
 
 
 def _apply_all_patches() -> list[str]:
