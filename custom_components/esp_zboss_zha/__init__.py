@@ -1,30 +1,29 @@
-"""ESP32-C6 ZBOSS adapter for ZHA — runtime patches.
+"""ESP32-C6 ZBOSS adapter for ZHA — RadioType registration.
 
 This custom-component is a thin glue layer that:
 
-1. Bundles `zigpy-zboss>=1.2.0` as a pip requirement (via manifest.json), so
+1. Bundles `zigpy-zboss>=2.0.1` as a pip requirement (via manifest.json), so
    HACS pulls it into the HA Python environment.
 
-2. Applies three runtime patches against `zigpy-zboss` v1.2.0 to bring it back
-   to a working state against current zigpy / serialx:
-     - `.name`-attribute access in `zigpy_zboss.uart.ZbossNcpProtocol`
-       (replaces missing `serialx.LinuxSerial.name` with `port` fallback).
-     - `ControllerApplication.start_network` propagating `NWKAddr` from
-       `NWK.Formation.Rsp` into `state.node_info.nwk` (otherwise post-formation
-       `int(state.node_info.nwk)` raises `TypeError`).
-     - `voluptuous` schema lenience for `ota.providers` defaults.
-
-3. Extends `zha.application.const.RadioType` with a `zboss` member so the ZHA
+2. Extends `zha.application.const.RadioType` with a `zboss` member so the ZHA
    "select radio type" config-flow step offers ZBOSS. The extended member
    maps to `zigpy_zboss.zigbee.application.ControllerApplication`.
 
-All four patches are no-ops if the upstream bug is already fixed (idempotent
-guards). Once `kardia-as/zigpy-zboss#19` and follow-up PRs land + ship in
-HACS-PyPI, those patch blocks can be removed cleanly.
+The three `zigpy-zboss` runtime compatibility shims that earlier versions
+carried — the `.name` accessor, post-formation `node_info.nwk` propagation, and
+the `ota.providers` voluptuous lenience — are gone as of v0.3.0: all three were
+fixed upstream in zigpy-zboss 2.0.0 / 2.0.1 (PRs #73 / #76; the library now
+requires `zigpy>=0.92.0,<2`). They are not just unnecessary now — the
+`node_info.nwk` override would actively conflict with the upstream fix
+(`_form_network` sets `node_info.nwk = res.NWKAddr` itself). The RadioType
+extension below is the only thing this component still does: ZHA core has no
+`zboss` RadioType, so it must be injected at runtime.
+
+The patch is a no-op if `zboss` is already a RadioType member (idempotent).
 
 Tested against:
-- ESP32-C6 + esp-coordinator v1.1.22 (tostmann fork)
-- zigpy-zboss 1.2.0
+- ESP32-C6 + esp-coordinator (tostmann fork)
+- zigpy-zboss 2.0.1
 - HA Core 2026.x
 
 Source: https://github.com/tostmann/zha-zboss-esp
@@ -81,13 +80,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_apply(hass: HomeAssistant) -> None:
-    """Apply the compat patches and log the resulting RadioType members.
+    """Apply the RadioType extension and log the resulting RadioType members.
 
-    The patch functions do synchronous file I/O when first importing
-    `zigpy_zboss`, `zigpy`, `zha` (module load, schema scan, voluptuous
-    compilation, etc.). HA's loop watchdog warns about blocking-on-event-loop
-    if we do that on the event loop directly, so run the work in an executor
-    thread.
+    The patch function does synchronous file I/O when first importing
+    `zigpy_zboss`, `zha` (module load, importlib). HA's loop watchdog warns
+    about blocking-on-event-loop if we do that on the event loop directly, so
+    run the work in an executor thread.
     """
     applied = await hass.async_add_executor_job(_apply_all_patches)
 
@@ -111,14 +109,8 @@ async def _async_apply(hass: HomeAssistant) -> None:
 
 
 def _apply_all_patches() -> list[str]:
-    """Apply all patches synchronously — call from an executor thread."""
+    """Apply the RadioType extension synchronously — call from an executor thread."""
     applied: list[str] = []
-    if _patch_uart_name():
-        applied.append("zigpy_zboss.uart.name")
-    if _patch_application_node_info_nwk():
-        applied.append("ControllerApplication.start_network nwk-propagation")
-    if _patch_zigpy_ota_schema():
-        applied.append("zigpy schema ota.providers lenience")
     if _patch_radio_type_zboss():
         applied.append("zha RadioType.zboss")
     return applied
@@ -135,131 +127,9 @@ def _get_radio_type_members() -> list[str] | None:
 
 
 # ---------------------------------------------------------------------------
-# Patch implementations — each returns True if it actually patched something,
-# False if upstream already had the fix (idempotent).
+# Patch implementation — returns True if it actually patched something,
+# False if `zboss` was already a RadioType member (idempotent).
 # ---------------------------------------------------------------------------
-
-
-def _patch_uart_name() -> bool:
-    """Fix `ZbossNcpProtocol.name` access against `serialx.LinuxSerial`.
-
-    Original: `return self._transport.serial.name`. `LinuxSerial` exposes
-    `.port`, not `.name`, so this raises `AttributeError`. The exception
-    propagates back from `ZBOSS.connect`, gets swallowed, and the next
-    `request()` raises `"Coordinator is disconnected"`.
-    """
-    try:
-        from zigpy_zboss import uart as _uart
-    except ImportError:
-        _LOGGER.debug("zigpy_zboss.uart not importable; skipping name patch")
-        return False
-
-    if getattr(_uart, "_esp_zboss_zha_name_patched", False):
-        return False
-
-    def _safe_name(self):
-        ser = self._transport.serial
-        return getattr(ser, "name",
-                       getattr(ser, "port", "<unnamed>"))
-
-    _uart.ZbossNcpProtocol.name = property(_safe_name)
-    _uart._esp_zboss_zha_name_patched = True
-    return True
-
-
-def _patch_application_node_info_nwk() -> bool:
-    """Propagate `NWK.Formation.Rsp.NWKAddr` into `state.node_info.nwk`.
-
-    Without this, `ControllerApplication.start_network` reaches
-    `self.devices[self.state.node_info.ieee] = ZbossCoordinator(self, ieee,
-    self.state.node_info.nwk)` where `nwk` is None — `int(None)` raises.
-    """
-    try:
-        from zigpy_zboss.zigbee import application as _zba
-    except ImportError:
-        _LOGGER.debug("zigpy_zboss.zigbee.application not importable; skipping")
-        return False
-
-    if getattr(_zba, "_esp_zboss_zha_nwk_patched", False):
-        return False
-
-    orig_form_network = getattr(_zba.ControllerApplication, "_form_network", None)
-    if orig_form_network is None:
-        _LOGGER.debug("no _form_network on ControllerApplication; skipping")
-        return False
-
-    async def patched_form_network(self, network_info, node_info):
-        result = await orig_form_network(self, network_info, node_info)
-        # After formation, refresh node_info.nwk from the live network state
-        # in case the original path left it as None.
-        if self.state.node_info.nwk is None:
-            try:
-                import zigpy_zboss.commands as c
-                resp = await self._api.request(
-                    c.NcpConfig.GetShortPANID.Req(TSN=self.get_sequence()),
-                )
-                # PANID returned is the coordinator's own short address (= 0x0000
-                # for a coordinator in its own network), not the PAN ID. Use
-                # zigpy.types.NWK literal 0x0000 since that's correct for a ZC.
-                import zigpy.types as zt
-                self.state.node_info.nwk = zt.NWK(0x0000)
-                _LOGGER.debug(
-                    "[esp_zboss_zha] patched node_info.nwk = 0x0000 "
-                    "(coordinator, PAN ID was 0x%04x)", resp.PANID,
-                )
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.warning(
-                    "[esp_zboss_zha] could not patch node_info.nwk: %s", exc,
-                )
-        return result
-
-    _zba.ControllerApplication._form_network = patched_form_network
-    _zba._esp_zboss_zha_nwk_patched = True
-    return True
-
-
-def _patch_zigpy_ota_schema() -> bool:
-    """Make zigpy's `cv_ota_provider` validator tolerate already-built
-    provider objects.
-
-    Current zigpy 1.4.x's `ota.providers` schema default contains
-    `ZigpyOtaProvider`-like instances; the validator then calls `obj.get(...)`
-    and raises `AttributeError`. We rebind `zigpy.config.validators.cv_ota_provider`
-    to a lenient wrapper.
-
-    **Limitation**: voluptuous compiles validators at `Schema(...)` construction
-    time, so any schema that was already built before our rebind keeps the OLD
-    function reference. That includes `ControllerApplication.SCHEMA` which is a
-    class attribute compiled at module load. So this rebind catches only
-    schemas constructed AFTER our setup runs — for ZHA's existing probe path
-    the workaround is incomplete. Real fix needs to land in `kardia-as/zigpy-zboss`
-    so newer release ships with a correct `ota.providers` default.
-
-    Tracked in https://github.com/kardia-as/zigpy-zboss/issues/19 as part of
-    the broader schema bit-rot discussion.
-    """
-    try:
-        import zigpy.config.validators as _zv
-    except ImportError:
-        return False
-    if getattr(_zv, "_esp_zboss_zha_ota_patched", False):
-        return False
-
-    orig = getattr(_zv, "cv_ota_provider", None)
-    if orig is None:
-        return False
-
-    def lenient_cv_ota_provider(obj):
-        # zigpy defaults inject provider INSTANCES rather than dicts; the
-        # original validator assumes dict and crashes on `.get()`. Pass
-        # instances through unchanged.
-        if not isinstance(obj, dict):
-            return obj
-        return orig(obj)
-
-    _zv.cv_ota_provider = lenient_cv_ota_provider
-    _zv._esp_zboss_zha_ota_patched = True
-    return True
 
 
 def _patch_radio_type_zboss() -> bool:

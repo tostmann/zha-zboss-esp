@@ -1,8 +1,10 @@
 """Single-instance config flow for the ESP32-C6 ZBOSS adapter for ZHA.
 
 This integration has **no settings** — its entire job is to run the runtime
-compatibility patches in `__init__.py` (extend `zha.application.const.RadioType`
-with a `zboss` member + three `zigpy-zboss` shims).
+patch in `__init__.py` that extends `zha.application.const.RadioType` with a
+`zboss` member (so ZHA's radio picker offers ZBOSS). As of v0.3.0 the three
+`zigpy-zboss` compatibility shims are gone — they were fixed upstream in
+zigpy-zboss 2.0.x.
 
 The config flow exists solely so Home Assistant loads the integration through a
 normal config entry. That matters because, before v0.2.0, the integration was

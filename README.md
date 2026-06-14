@@ -5,36 +5,46 @@ integration use the **ZBOSS NCP Serial Protocol** as exposed by
 [`tostmann/esp-coordinator`](https://github.com/tostmann/esp-coordinator)
 on ESP32-C6 hardware.
 
-> **Status**: 0.2.x — early. Works against `esp-coordinator` v1.1.22+ and
-> `zigpy-zboss` 1.2.0 on Home Assistant Core 2026.x. Bug reports welcome.
+> **Status**: 0.3.x — early. Works against `esp-coordinator` v1.1.22+ and
+> `zigpy-zboss` 2.0.1 on Home Assistant Core 2026.x. Bug reports welcome.
 >
-> **0.2.0 changelog**: the integration now has a config entry (config flow).
+> **0.3.0 changelog**: re-pinned to `zigpy-zboss>=2.0.1`. The three runtime
+> compatibility shims this component used to carry are **removed** — all three
+> were fixed upstream in zigpy-zboss 2.0.0 / 2.0.1, and one of them (the
+> post-formation `node_info.nwk` override) would now conflict with the upstream
+> fix. The component now does exactly one thing: register the `zboss` RadioType
+> with ZHA.
+>
+> **0.2.0 changelog**: the integration gained a config entry (config flow).
 > Previous 0.1.x releases were `config_flow: false` with no load trigger, so
 > Home Assistant never ran the integration's setup and ZBOSS never appeared
 > in ZHA's radio picker (issue #1). After updating, **add the integration
-> once** (step 5 below) — that activates the patches on every restart.
+> once** (step 5 below) — that activates it on every restart.
 
 ## What it does
 
 ZHA in stock HA does not list ZBOSS as a radio type. The Python library
-[`zigpy-zboss`](https://github.com/kardia-as/zigpy-zboss) exists and speaks
-the right wire protocol — but it has been in maintenance mode since 2024 and
-has bit-rotted against current zigpy/serialx, so a plain
-`pip install zigpy-zboss` doesn't work in current HA.
+[`zigpy-zboss`](https://github.com/kardia-as/zigpy-zboss) speaks the right wire
+protocol and — as of the 2.0.x line (2026) — is modern and actively maintained
+again. What stock HA is still missing is simply the wiring that exposes it to
+ZHA's radio picker.
 
 This component:
 
-1. **Declares `zigpy-zboss>=1.2.0` as a Python requirement** so HACS pulls it
-   into the HA Python environment automatically.
-2. **Applies three runtime patches** to `zigpy-zboss` to make it functional
-   against current zigpy. All idempotent — no-ops if upstream releases a fix.
-3. **Extends ZHA's `RadioType` enum** with a `zboss` member so the UI radio
-   picker in the ZHA add-integration flow offers ZBOSS as a choice.
+1. **Declares `zigpy-zboss>=2.0.1,<3` as a Python requirement** so HACS pulls
+   it into the HA Python environment automatically.
+2. **Extends ZHA's `RadioType` enum** with a `zboss` member so the UI radio
+   picker in the ZHA add-integration flow offers ZBOSS as a choice. The patch
+   is idempotent — a no-op if `zboss` is already present.
+
+Earlier releases (≤ 0.2.x) also carried three runtime shims that patched
+`zigpy-zboss` 1.2.0 back into working order against current zigpy. Those are
+gone as of 0.3.0: all three were fixed upstream in zigpy-zboss 2.0.0 / 2.0.1.
 
 The component itself has no entities and no settings. It loads through a
-single-instance config entry whose only purpose is to run the patches on
-every Home Assistant start — early enough that ZBOSS is registered before
-ZHA's own add-integration flow reads the radio-type list.
+single-instance config entry whose only purpose is to run the RadioType
+registration on every Home Assistant start — early enough that ZBOSS is
+registered before ZHA's own add-integration flow reads the radio-type list.
 
 ## Installation (HACS)
 
@@ -57,8 +67,8 @@ ZHA's own add-integration flow reads the radio-type list.
 
 If you can't use HACS, copy
 `custom_components/esp_zboss_zha/` into your HA config directory's
-`custom_components/` folder, then `pip install zigpy-zboss>=1.2.0` into your
-HA Python environment, and restart.
+`custom_components/` folder, then `pip install "zigpy-zboss>=2.0.1,<3"` into
+your HA Python environment, and restart.
 
 ## What if "ZBOSS" doesn't appear in the radio picker?
 
@@ -86,13 +96,12 @@ boot. Remaining edge cases are tracked upstream
 
 ## Why a custom component instead of an upstream PR?
 
-We're tracking this in parallel — see the open
-[discussion on `kardia-as/zigpy-zboss#19`](https://github.com/kardia-as/zigpy-zboss/issues/19)
-for the upstream library-side path. Once the three library bugs land and ship
-in a PyPI release, the patches in this component become no-ops.
-A `RadioType.zboss` member upstream in `home-assistant/core` ZHA is a longer
-conversation (the `adapter:zboss` is labeled "experimental"); when/if that
-lands, this component becomes obsolete.
+The library-side bugs that used to need patching here have already landed
+upstream — see [`kardia-as/zigpy-zboss#19`](https://github.com/kardia-as/zigpy-zboss/issues/19)
+and the 2.0.x release line. What remains is the ZHA wiring: a `RadioType.zboss`
+member upstream in `home-assistant/core` ZHA is a longer conversation (the
+`adapter:zboss` is labeled "experimental"). When/if that lands, this component
+becomes obsolete.
 
 ## Pointers
 
