@@ -38,6 +38,9 @@ if TYPE_CHECKING:  # imports only needed for type hints
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.typing import ConfigType
 
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers.start import async_at_started
+
 from .const import DOMAIN, RADIO_DESCRIPTION
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,14 +62,41 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Config-entry path — the supported one as of v0.2.0.
 
-    Runs on every Home Assistant start, early enough that the `RadioType`
-    extension is in place before ZHA's add-integration flow reads it. This is
-    what fixes issue #1: with no config entry (and no `configuration.yaml`
-    key) Home Assistant never called `async_setup`, so the patches never ran
-    and ZBOSS never showed up in ZHA's radio picker.
+    Runs on every Home Assistant start. Applies the `RadioType` extension, then
+    arms a one-shot self-heal for the load-order race described below.
     """
     await _async_apply(hass)
+
+    # Load-order race: this integration and `zha` set up concurrently
+    # (asyncio.gather over a bootstrap stage), and ZHA resolves
+    # `RadioType[<radio_type>]` eagerly during its own config-entry setup. If
+    # ZHA wins the race it raises `KeyError('zboss')` and its entry lands in
+    # SETUP_ERROR *before* our patch does. There is no manifest-level ordering
+    # fix: config-entry setup does not resolve `dependencies` /
+    # `after_dependencies` (only the YAML setup path does), and the two
+    # integrations are unordered within the stage. So we don't try to win the
+    # race — we heal it: once HA has fully started (every setup is final and the
+    # patch is long applied), reload any zboss ZHA entry that failed.
+    async_at_started(hass, _async_heal_zboss_zha_entries)
     return True
+
+
+async def _async_heal_zboss_zha_entries(hass: HomeAssistant) -> None:
+    """Reload zboss ZHA entries that lost the RadioType load-order race.
+
+    A no-op in the common case where ZHA set up cleanly (entry already LOADED).
+    """
+    for zha_entry in hass.config_entries.async_entries("zha"):
+        if (
+            zha_entry.data.get("radio_type") == "zboss"
+            and zha_entry.state is not ConfigEntryState.LOADED
+        ):
+            _LOGGER.warning(
+                "[%s] ZHA entry '%s' is %s; reloading now that RadioType.zboss "
+                "is registered (load-order race)",
+                DOMAIN, zha_entry.title, zha_entry.state,
+            )
+            await hass.config_entries.async_reload(zha_entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

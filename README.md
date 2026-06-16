@@ -8,6 +8,17 @@ on ESP32-C6 hardware.
 > **Status**: 0.3.x — early. Works against `esp-coordinator` v1.1.22+ and
 > `zigpy-zboss` 2.0.1 on Home Assistant Core 2026.x. Bug reports welcome.
 >
+> **0.3.2 changelog**: fixed a load-order race that could leave ZHA failing to
+> start. This integration extends ZHA's `RadioType` enum at runtime, but it and
+> `zha` set up concurrently — if `zha` wins the race it resolves
+> `RadioType['zboss']` before the patch lands, and its config entry fails with
+> `KeyError: 'zboss'` (staying in error until the next restart). There is no
+> manifest-level ordering fix — config-entry setup honours neither
+> `dependencies` nor `after_dependencies`. So the integration now **self-heals**:
+> once Home Assistant has fully started, it reloads any ZBOSS ZHA entry that
+> failed, by which point the patch is in place. This also removes the old
+> "restart twice after install" caveat.
+>
 > **0.3.1 changelog**: capped `zigpy-zboss` to `<2.0.2`. zigpy-zboss 2.0.2
 > changed how the network key is read at startup — it now issues the
 > `GetNwkKeys` NCP command instead of a raw NVRAM dataset read — and the
