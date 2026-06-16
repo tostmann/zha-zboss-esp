@@ -8,6 +8,14 @@ on ESP32-C6 hardware.
 > **Status**: 0.3.x — early. Works against `esp-coordinator` v1.1.22+ and
 > `zigpy-zboss` 2.0.1 on Home Assistant Core 2026.x. Bug reports welcome.
 >
+> **0.3.1 changelog**: capped `zigpy-zboss` to `<2.0.2`. zigpy-zboss 2.0.2
+> changed how the network key is read at startup — it now issues the
+> `GetNwkKeys` NCP command instead of a raw NVRAM dataset read — and the
+> `esp-coordinator` firmware does not implement that command yet, so on 2.0.2
+> the adapter cannot resume an already-formed network (startup aborts with
+> `ControllerException: … GetNwkKeys returned no usable network key`). The cap
+> will be lifted once a firmware release adds `GET_NWK_KEYS` support.
+>
 > **0.3.0 changelog**: re-pinned to `zigpy-zboss>=2.0.1`. The three runtime
 > compatibility shims this component used to carry are **removed** — all three
 > were fixed upstream in zigpy-zboss 2.0.0 / 2.0.1, and one of them (the
@@ -31,7 +39,7 @@ ZHA's radio picker.
 
 This component:
 
-1. **Declares `zigpy-zboss>=2.0.1,<3` as a Python requirement** so HACS pulls
+1. **Declares `zigpy-zboss>=2.0.1,<2.0.2` as a Python requirement** so HACS pulls
    it into the HA Python environment automatically.
 2. **Extends ZHA's `RadioType` enum** with a `zboss` member so the UI radio
    picker in the ZHA add-integration flow offers ZBOSS as a choice. The patch
@@ -67,7 +75,7 @@ registered before ZHA's own add-integration flow reads the radio-type list.
 
 If you can't use HACS, copy
 `custom_components/esp_zboss_zha/` into your HA config directory's
-`custom_components/` folder, then `pip install "zigpy-zboss>=2.0.1,<3"` into
+`custom_components/` folder, then `pip install "zigpy-zboss>=2.0.1,<2.0.2"` into
 your HA Python environment, and restart.
 
 ## What if "ZBOSS" doesn't appear in the radio picker?
